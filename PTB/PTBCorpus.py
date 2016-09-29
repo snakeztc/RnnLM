@@ -19,7 +19,7 @@ class PTBCorpus(Corpus):
             self.train_corpus = temp['train']
             self.valid_corpus = temp['valid']
             self.test_corpus = temp['test']
-            self.vocab, self.vocab_freq = temp['vocab']
+            self.vocab, self.vocab_to_id = temp['vocab']
             print "Done loading cache."
             return
 
@@ -63,14 +63,25 @@ class PTBCorpus(Corpus):
 
         sorted_vocab = sorted([(cnt, t) for t, cnt in vocab_count.iteritems()], reverse=True)
         self.vocab = [t for cnt, t in sorted_vocab]
-        self.vocab_freq = [cnt for cnt, t in sorted_vocab]
+        # 1-based index, since 0 is reserved for padding
+        self.vocab_to_id = {t:idx+1 for idx, t in enumerate(self.vocab)}
         print("Done loading corpus")
         pkl.dump({'train': self.train_corpus,
                   'valid': self.valid_corpus,
                   'test': self.test_corpus,
-                  'vocab': (self.vocab, self.vocab_freq)}, open(cache_path, 'wb'))
+                  'vocab': (self.vocab, self.vocab_to_id)}, open(cache_path, 'wb'))
 
     def get_corpus(self):
-        return {'train': self.train_corpus, 'valid': self.valid_corpus, 'test': self.test_corpus}
+        # convert the corpus into ID
+        id_train = self._to_id_corpus(self.train_corpus)
+        id_valid = self._to_id_corpus(self.valid_corpus)
+        id_test = self._to_id_corpus(self.test_corpus)
+        return {'train': id_train, 'valid': id_valid, 'test': id_test}
+
+    def _to_id_corpus(self, data):
+        results = []
+        for line in data:
+            results.append([self.vocab_to_id[t] for t in line])
+        return results
 
 
