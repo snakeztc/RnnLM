@@ -2,14 +2,20 @@ import numpy as np
 
 
 class SeqDataLoader(object):
-    def __init__(self, data):
+    def __init__(self, name, data):
+        self.name = name
         self.data = data
         self.indexes = range(len(self.data))
         self.data_size = len(data)
+
         # iteration related
         self.ptr = 0
         self.batch_size = 0
         self.num_batch = None
+
+        # find the longest sequence length
+        max_seq_len = np.max([len(row) for row in data])
+        print "Longest sentence in corpus is %d" % max_seq_len
 
     def _shuffle(self):
         np.random.shuffle(self.indexes)
@@ -25,13 +31,15 @@ class SeqDataLoader(object):
             outputs[idx, :] = row[1:]
         return inputs, input_lens, outputs
 
-    def epoch_init(self, batch_size):
-        self._shuffle()
+    def epoch_init(self, batch_size, shuffle=True):
+        if shuffle:
+            self._shuffle()
         self.ptr = 0
         self.batch_size = batch_size
         self.num_batch = self.data_size // batch_size
+        print("%s begins training with %d batches" % (self.name, self.num_batch))
 
-    def next_train_batch(self):
+    def next_batch(self):
         if self.ptr < self.num_batch:
             selected_ids = self.indexes[self.ptr * self.batch_size:min((self.ptr+1)*self.batch_size, self.data_size)]
             self.ptr += 1

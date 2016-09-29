@@ -84,4 +84,7 @@ class PTBCorpus(Corpus):
             results.append([self.vocab_to_id[t] for t in line])
         return results
 
+    def get_vocab_size(self):
+        return len(self.vocab) + 1
+
 

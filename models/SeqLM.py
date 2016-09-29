@@ -14,7 +14,7 @@ from tensorflow.python.ops.nn import rnn_cell
 
 class SeqLM(object):
     """
-    This model treat LM as a sequential labelling problem, where it needs to make prediction at every step
+    This models treat LM as a sequential labelling problem, where it needs to make prediction at every step
     """
     def __init__(self, sess, vocab_size, cell_size, embedding_size, num_layer, log_dir,
                  learning_rate=0.001, momentum=0.9, use_dropout=True, l2_coef=1e-6):
@@ -71,31 +71,23 @@ class SeqLM(object):
         print "Save summary to %s" % log_dir
         self.train_summary_writer = tf.train.SummaryWriter(train_log_dir, sess.graph)
         self.valid_summary_writer = tf.train.SummaryWriter(valid_log_dir, sess.graph)
+        self.saver = tf.train.Saver(tf.all_variables())
 
     def sequence_loss(self):
         weights = tf.to_float(tf.sign(self.labels, name="mask"))
-        batch_size = array_ops.shape(self.labels)[0]
-        max_sent_len = array_ops.shape(self.labels)[1]
-
         with ops.name_scope("sequence_loss_by_example"):
-            log_perp_list = []
-            for idx in xrange(max_sent_len):
-                crossent = nn_ops.sparse_softmax_cross_entropy_with_logits(self.logits[:, idx, :], self.labels[:, idx])
-                log_perp_list.append(crossent * weights[:, idx])
-            log_perps = math_ops.add_n(log_perp_list)
-            total_size = tf.reduce_sum(weights, reduction_indices=1) + 1e-12
-            log_perps /= total_size
-
-        return tf.reduce_sum(log_perps) / math_ops.cast(batch_size, dtypes.float32)
+            crossent = nn_ops.sparse_softmax_cross_entropy_with_logits(self.logits, self.labels)
+            log_perps = tf.reduce_mean(crossent * weights)
+        return log_perps
 
     def train(self, t, sess, inputs, input_len, outputs):
-        feed_dict = {self.inputs: inputs, self.input_lens: input_len, self.labels: outputs}
+        feed_dict = {self.inputs: inputs, self.input_lens: input_len, self.labels: outputs, self.keep_prob: 0.5}
         _, loss, summary = sess.run([self.train_ops, self.loss, self.summary_op], feed_dict)
         self.train_summary_writer.add_summary(summary, t)
         return loss
 
     def valid(self, t, sess, inputs, input_len, outputs):
-        feed_dict = {self.inputs: inputs, self.input_lens: input_len, self.labels: outputs}
+        feed_dict = {self.inputs: inputs, self.input_lens: input_len, self.labels: outputs, self.keep_prob: 1.0}
         loss, summary = sess.run([self.loss, self.summary_op], feed_dict)
         self.valid_summary_writer.add_summary(summary, t)
         return loss
