@@ -42,6 +42,9 @@ class StateDataLoader(object):
         self.batch_indexes = []
         for i in range(self.num_batch):
             self.batch_indexes.append(self.sorted_indexes[i*self.batch_size:(i+1)*self.batch_size])
+        if shuffle:
+            self._shuffle()
+
         print("%s begins training with %d batches" % (self.name, self.num_batch))
 
     def next_batch(self):
