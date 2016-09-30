@@ -1,13 +1,13 @@
 import tensorflow as tf
-from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import embedding_ops
-from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import nn_ops
 from tensorflow.python.ops import variable_scope
 import tf_helpers
 import os
+import time
+import utils
 
 from tensorflow.python.ops.nn import rnn_cell
 
@@ -80,17 +80,37 @@ class SeqLM(object):
             log_perps = tf.reduce_mean(crossent * weights)
         return log_perps
 
-    def train(self, t, sess, inputs, input_len, outputs):
-        feed_dict = {self.inputs: inputs, self.input_lens: input_len, self.labels: outputs, self.keep_prob: 0.5}
-        _, loss, summary = sess.run([self.train_ops, self.loss, self.summary_op], feed_dict)
-        self.train_summary_writer.add_summary(summary, t)
-        return loss
+    def train(self, global_t, sess, train_feed):
+        losses = []
+        local_t = 0
+        while True:
+            batch = train_feed.next_batch()
+            if batch is None:
+                break
+            inputs, input_lens, outputs = batch
+            feed_dict = {self.inputs: inputs, self.input_lens: input_lens, self.labels: outputs, self.keep_prob: 0.5}
+            _, loss, summary = sess.run([self.train_ops, self.loss, self.summary_op], feed_dict)
+            self.train_summary_writer.add_summary(summary, global_t)
+            losses.append(loss)
+            global_t += 1
+            local_t += 1
+            if local_t % 50 == 0:
+                utils.progress(local_t/float(train_feed.num_batch))
+        return global_t, losses
 
-    def valid(self, t, sess, inputs, input_len, outputs):
-        feed_dict = {self.inputs: inputs, self.input_lens: input_len, self.labels: outputs, self.keep_prob: 1.0}
-        loss, summary = sess.run([self.loss, self.summary_op], feed_dict)
-        self.valid_summary_writer.add_summary(summary, t)
-        return loss
+    def valid(self, t, sess, valid_feed):
+        losses = []
+        while True:
+            batch = valid_feed.next_batch()
+            if batch is None:
+                break
+            inputs, input_lens, outputs = batch
+            feed_dict = {self.inputs: inputs, self.input_lens: input_lens, self.labels: outputs, self.keep_prob: 1.0}
+            loss, summary = sess.run([self.loss, self.summary_op], feed_dict)
+            self.valid_summary_writer.add_summary(summary, t)
+            losses.append(loss)
+
+        return losses
 
 
 

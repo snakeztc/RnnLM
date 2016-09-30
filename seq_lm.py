@@ -64,49 +64,26 @@ with tf.Session() as sess:
         print("Created models with fresh parameters.")
         sess.run(tf.initialize_all_variables())
 
-    losses = []
     global_t = 0
-    step_time = 0.0
     patience = 10 # wait for at least 10 epoch before stop
     best_dev_loss = np.inf
 
     for epoch in range(FLAGS.max_epoch):
         train_feed.epoch_init(FLAGS.batch_size)
         print("epoch %d" % epoch)
-        while True:
-            start_time = time.time()
-            batch = train_feed.next_batch()
-            if batch is None:
-                break
-            inputs, input_lens, outputs = batch
-            loss = model.train(global_t, sess, inputs, input_lens, outputs)
-            step_time += (time.time() - start_time)
-            losses.append(loss)
-            global_t += 1
-
-        train_loss = np.mean(losses[-train_feed.num_batch:])
-        print("Train loss for %f and perplexity %f and step time %.4f" %
-              (train_loss, np.exp(train_loss), step_time/train_feed.num_batch))
+        global_t, losses = model.train(global_t, sess, train_feed)
+        train_loss = np.mean(losses)
+        print("Train loss for %f and perplexity %f" % (train_loss, np.exp(train_loss)))
 
         # begin validation
         valid_feed.epoch_init(FLAGS.batch_size, shuffle=False)
-        valid_loss = []
-        while True:
-            batch = valid_feed.next_batch()
-            if batch is None:
-                break
-            inputs, input_lens, outputs = batch
-            loss = model.valid(global_t, sess, inputs, input_lens, outputs)
-            valid_loss.append(loss)
-
-        valid_loss = np.mean(valid_loss)
+        losses = model.valid(global_t, sess, valid_feed)
+        valid_loss = np.mean(losses)
         print("Valid loss for %f and perplexity %f" %
               (valid_loss, np.exp(valid_loss)))
 
         # only save a models if the dev loss is smaller
         done_epoch = epoch +1
-        step_time = 0.0
-
         if valid_loss <= best_dev_loss * FLAGS.improve_threshold:
             patience = max(patience, done_epoch *FLAGS.patience_increase)
             checkpoint_path = os.path.join(ckp_dir, "letsgo.ckpt")
