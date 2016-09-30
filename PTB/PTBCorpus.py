@@ -78,7 +78,7 @@ class PTBCorpus(Corpus):
         return results
 
     @staticmethod
-    def _cut_len(name, lines, min_len=2, max_len=30):
+    def _cut_len(name, lines, min_len=1, max_len=36):
         results = []
         skip_cnts = 0
         for l in lines:
