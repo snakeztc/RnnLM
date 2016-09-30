@@ -78,8 +78,7 @@ with tf.Session() as sess:
         valid_feed.epoch_init(FLAGS.batch_size, shuffle=False)
         losses = model.valid(global_t, sess, valid_feed)
         valid_loss = np.mean(losses)
-        print("Valid loss for %f and perplexity %f" %
-              (valid_loss, np.exp(valid_loss)))
+        print("Valid loss for %f and perplexity %f" % (valid_loss, np.exp(valid_loss)))
 
         # only save a models if the dev loss is smaller
         done_epoch = epoch +1
