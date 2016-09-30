@@ -87,10 +87,11 @@ with tf.Session() as sess:
         if valid_loss < best_dev_loss:
             if valid_loss <= best_dev_loss * FLAGS.improve_threshold:
                 patience = max(patience, done_epoch *FLAGS.patience_increase)
+                best_dev_loss = valid_loss
 
             # still save the best train model
             model.saver.save(sess, checkpoint_path, global_step=epoch)
-            best_dev_loss = valid_loss
+
         if FLAGS.early_stop and patience <= done_epoch:
             print("!!Early stop due to run out of patience!!")
             break
