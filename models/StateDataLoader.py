@@ -16,7 +16,8 @@ class StateDataLoader(object):
                 self.data.append(line[0:t_id])
 
         self.indexes = range(len(self.data))
-        self.data_size = len(data)
+        self.data_size = len(self.data)
+        print("Create %d sentence state samples" % self.data_size)
 
     def _shuffle(self):
         np.random.shuffle(self.indexes)

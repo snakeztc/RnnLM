@@ -24,8 +24,8 @@ class StateLM(object):
             self.labels = tf.placeholder(dtype=tf.int32, shape=(None, ), name="next_word")
             self.keep_prob =tf.placeholder(dtype=tf.float32, name="keep_prob")
 
-        max_sent_len = array_ops.shape(self.labels)[1]
         with variable_scope.variable_scope("word-embedding"):
+            max_sent_len = array_ops.shape(self.inputs)[1]
             embedding = tf_helpers.weight_and_bias(vocab_size, embedding_size, "embedding_w", include_bias=False)
             input_embedding = embedding_ops.embedding_lookup(embedding, tf.squeeze(tf.reshape(self.inputs, [-1, 1]),
                                                                                    squeeze_dims=[1]))
@@ -49,17 +49,17 @@ class StateLM(object):
                 sequence_length=self.input_lens,
             )
             # get the TRUE last outputs
-            last_outputs = self._last_relevant(outputs)
+            last_outputs = tf.reduce_sum(tf.mul(outputs, tf.expand_dims(tf.one_hot(self.input_lens, max_sent_len), -1)), 1)
             proj_w, proj_b = tf_helpers.weight_and_bias(cell_size, vocab_size, "output_project", include_bias=True)
-            self.logits = tf.nn_ops.xw_plus_b(last_outputs, proj_w, proj_b, name="final_logitss")
+            self.logits = tf.matmul(last_outputs, proj_w) + proj_b
 
-        vars = tf.trainable_variables()
         self.loss = tf.reduce_mean(nn_ops.sparse_softmax_cross_entropy_with_logits(self.logits, self.labels))
         tf.scalar_summary("entropy_loss", self.loss)
-        tf.scalar_summary("perplexity" ,tf.exp(self.loss))
+        tf.scalar_summary("perplexity", tf.exp(self.loss))
         self.summary_op = tf.merge_all_summaries()
 
         # weight decay
+        vars = tf.trainable_variables()
         loss_l2 = tf.add_n([tf.nn.l2_loss(v) for v in vars if "bias" not in v.name.lower()])
         self.reg_loss = self.loss + l2_coef * loss_l2
 
@@ -73,16 +73,6 @@ class StateLM(object):
         self.train_summary_writer = tf.train.SummaryWriter(train_log_dir, sess.graph)
         self.valid_summary_writer = tf.train.SummaryWriter(valid_log_dir, sess.graph)
         self.saver = tf.train.Saver(tf.all_variables())
-
-    def _last_relevant(self, outputs):
-        batch_size = tf.shape(outputs)[0]
-        max_length = int(array_ops.shape(outputs)[1])
-        out_size = int(array_ops.shape(outputs)[2])
-
-        index = tf.range(0, batch_size) * max_length + (self.input_lens - 1)
-        flat = tf.reshape(outputs, [-1, out_size])
-        relevant = tf.gather(flat, index)
-        return relevant
 
     def train(self, global_t, sess, train_feed):
         losses = []
