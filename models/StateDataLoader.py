@@ -8,15 +8,18 @@ class StateDataLoader(object):
     num_batch = None
     batch_indexes = None
 
-    def __init__(self, name, data):
+    def __init__(self, name, data, curriculum_learning=False):
         self.name = name
         # break data into states
         self.data = []
         for line in data:
             for t_id in range(2, len(line)):
                 self.data.append(line[0:t_id])
-        all_lens = [len(line) for line in self.data]
-        self.sorted_indexes = list(np.argsort(all_lens))
+        if curriculum_learning:
+            all_lens = [len(line) for line in self.data]
+            self.sorted_indexes = list(np.argsort(all_lens))
+        else:
+            self.sorted_indexes = range(len(self.data))
         self.data_size = len(self.data)
         print("Create %d sentence state samples" % self.data_size)
 

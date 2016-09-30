@@ -49,7 +49,7 @@ class StateLM(object):
                 sequence_length=self.input_lens,
             )
             # get the TRUE last outputs
-            last_outputs = tf.reduce_sum(tf.mul(outputs, tf.expand_dims(tf.one_hot(self.input_lens, max_sent_len), -1)), 1)
+            last_outputs = tf.reduce_sum(tf.mul(outputs, tf.expand_dims(tf.one_hot(self.input_lens - 1, max_sent_len), -1)), 1)
             proj_w, proj_b = tf_helpers.weight_and_bias(cell_size, vocab_size, "output_project", include_bias=True)
             self.logits = tf.matmul(last_outputs, proj_w) + proj_b
 
