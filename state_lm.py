@@ -66,6 +66,7 @@ with tf.Session() as sess:
     global_t = 0
     patience = 10 # wait for at least 10 epoch before stop
     best_dev_loss = np.inf
+    checkpoint_path = os.path.join(ckp_dir, "state-ptb-lm.ckpt")
 
     for epoch in range(FLAGS.max_epoch):
         train_feed.epoch_init(FLAGS.batch_size)
@@ -82,9 +83,11 @@ with tf.Session() as sess:
 
         # only save a models if the dev loss is smaller
         done_epoch = epoch +1
-        if valid_loss <= best_dev_loss * FLAGS.improve_threshold:
-            patience = max(patience, done_epoch *FLAGS.patience_increase)
-            checkpoint_path = os.path.join(ckp_dir, "letsgo.ckpt")
+        if valid_loss < best_dev_loss:
+            if valid_loss <= best_dev_loss * FLAGS.improve_threshold:
+                patience = max(patience, done_epoch *FLAGS.patience_increase)
+
+            # still save the best train model
             model.saver.save(sess, checkpoint_path, global_step=epoch)
             best_dev_loss = valid_loss
         if FLAGS.early_stop and patience <= done_epoch:
