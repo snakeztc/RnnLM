@@ -72,9 +72,11 @@ with tf.Session() as sess:
     for epoch in range(FLAGS.max_epoch):
         train_feed.epoch_init(FLAGS.batch_size)
         print("epoch %d" % epoch)
+        start_time = time.time()
         global_t, losses = model.train(global_t, sess, train_feed)
+        epoch_time = time.time() - start_time
         train_loss = np.mean(losses)
-        print("Train loss for %f and perplexity %f" % (train_loss, np.exp(train_loss)))
+        print("Train loss for %f and perplexity %f step time %.4f" % (train_loss, np.exp(train_loss), epoch_time/train_feed.num_batch))
 
         # begin validation
         valid_feed.epoch_init(FLAGS.batch_size, shuffle=False)
