@@ -74,11 +74,12 @@ class SeqLM(object):
         self.saver = tf.train.Saver(tf.all_variables())
 
     def sequence_loss(self):
-        weights = tf.to_float(tf.sign(self.labels, name="mask"))
         with ops.name_scope("sequence_loss_by_example"):
+            weights = tf.to_float(tf.sign(self.labels, name="mask"))
+            batch_size = array_ops.shape(self.labels)[0]
             crossent = nn_ops.sparse_softmax_cross_entropy_with_logits(self.logits, self.labels)
-            log_perps = tf.reduce_mean(crossent * weights)
-        return log_perps
+            log_perps = tf.reduce_sum(crossent * weights, reduction_indices=1) / tf.to_float(self.input_lens)
+        return log_perps / tf.to_float(batch_size)
 
     def train(self, global_t, sess, train_feed):
         losses = []
