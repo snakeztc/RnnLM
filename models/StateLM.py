@@ -88,7 +88,7 @@ class StateLM(object):
             losses.append(loss)
             global_t += 1
             local_t += 1
-            if local_t % 50 == 0:
+            if local_t % 500 == 0:
                 utils.progress(local_t/float(train_feed.num_batch))
         return global_t, losses
 
