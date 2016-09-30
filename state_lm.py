@@ -19,6 +19,7 @@ tf.app.flags.DEFINE_float("l2_coef", 1e-7, "L2 regulzation weight for weight mat
 tf.app.flags.DEFINE_float("learning_rate", 0.001, "learning rate of SGD")
 tf.app.flags.DEFINE_float("momentum", 0.9, "How much momentum")
 tf.app.flags.DEFINE_bool("use_dropout", True, "if use drop out")
+tf.app.flags.DEFINE_bool("curriculum_learning", True, "Group lines so that batch has similar lens")
 tf.app.flags.DEFINE_float("improve_threshold", 0.995, "how much decrease in dev loss counts")
 tf.app.flags.DEFINE_float("patience_increase", 2.0, "How much more we wait for a new discovered minmum")
 tf.app.flags.DEFINE_bool("early_stop", True, "Whether to early stop")
@@ -32,7 +33,7 @@ corpus = api.get_corpus()
 train_data, valid_data, test_data = corpus.get("train"), corpus.get("valid"), corpus.get("test")
 
 # convert to numeric input outputs that fits into TF models
-train_feed = StateDataLoader("train", train_data)
+train_feed = StateDataLoader("train", train_data, curriculum_learning=FLAGS.curriculum_learning)
 valid_feed = StateDataLoader("valid", valid_data)
 test_feed = StateDataLoader("test", test_data)
 

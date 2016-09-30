@@ -17,9 +17,9 @@ class StateDataLoader(object):
                 self.data.append(line[0:t_id])
         if curriculum_learning:
             all_lens = [len(line) for line in self.data]
-            self.sorted_indexes = list(np.argsort(all_lens))
+            self.indexes = list(np.argsort(all_lens))
         else:
-            self.sorted_indexes = range(len(self.data))
+            self.indexes = range(len(self.data))
         self.data_size = len(self.data)
         print("Create %d sentence state samples" % self.data_size)
 
@@ -44,7 +44,7 @@ class StateDataLoader(object):
         self.num_batch = self.data_size // batch_size
         self.batch_indexes = []
         for i in range(self.num_batch):
-            self.batch_indexes.append(self.sorted_indexes[i*self.batch_size:(i+1)*self.batch_size])
+            self.batch_indexes.append(self.indexes[i * self.batch_size:(i + 1) * self.batch_size])
         if shuffle:
             self._shuffle()
 

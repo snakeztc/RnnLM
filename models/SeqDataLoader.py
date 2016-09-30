@@ -7,14 +7,21 @@ class SeqDataLoader(object):
     num_batch = None
     batch_indexes = None
 
-    def __init__(self, name, data):
+    def __init__(self, name, data, equal_len_batch=False):
         self.name = name
         self.data = data
         self.data_size = len(data)
-        all_lens = [len(line) for line in self.data]
-        self.sorted_indexes = list(np.argsort(all_lens))
+        self.equal_len_batch = equal_len_batch
+        if equal_len_batch:
+            all_lens = [len(line) for line in self.data]
+            self.indexes = list(np.argsort(all_lens))
+        else:
+            self.indexes = range(len(self.data))
 
-    def _shuffle(self):
+    def _shuffle_indexes(self):
+        np.random.shuffle(self.indexes)
+
+    def _shuffle_batch_indexes(self):
         np.random.shuffle(self.batch_indexes)
 
     def _prepare_batch(self, selected_index):
@@ -33,12 +40,18 @@ class SeqDataLoader(object):
         self.batch_size = batch_size
         self.num_batch = self.data_size // batch_size
 
+        # if shuffle and we don't want to group lines, shuffle index
+        if shuffle and not self.equal_len_batch:
+            self._shuffle_indexes()
+
         self.batch_indexes = []
         for i in range(self.num_batch):
-            self.batch_indexes.append(self.sorted_indexes[i*self.batch_size:(i+1)*self.batch_size])
+            self.batch_indexes.append(self.indexes[i * self.batch_size:(i + 1) * self.batch_size])
 
-        if shuffle:
-            self._shuffle()
+        # if shuffle and we want to group lines, shuffle batch indexes
+        if shuffle and self.equal_len_batch:
+            self._shuffle_batch_indexes()
+
         print("%s begins training with %d batches" % (self.name, self.num_batch))
 
     def next_batch(self):
