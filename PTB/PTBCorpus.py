@@ -36,26 +36,25 @@ class PTBCorpus(Corpus):
         self.valid_corpus = []
         self.test_corpus = []
         with open(train_path, 'rb') as train_f:
-            lines = train_f.readlines()
-            for l in lines:
-                tokens = l.split()
-                self.train_corpus.append(tokens)
-                # update vocab
-                for t in tokens:
-                    cnt = vocab_count.get(t, 0)
-                    vocab_count[t] = cnt + 1
+            self.train_corpus = self._to_tkn_list(train_f.readlines())
 
         # read validation
         with open(valid_path, 'rb') as valid_f:
-            lines = valid_f.readlines()
-            for l in lines:
-                self.valid_corpus.append(l.split())
+            self.valid_corpus = self._to_tkn_list(valid_f.readlines())
 
         # read test
         with open(test_path, 'rb') as test_f:
-            lines = test_f.readlines()
-            for l in lines:
-                self.test_corpus.append(l.split())
+            self.test_corpus = self._to_tkn_list(test_f.readlines())
+
+        for l in self.train_corpus:
+            for t in l:
+                cnt = vocab_count.get(t, 0)
+                vocab_count[t] = cnt + 1
+
+        # cut the length
+        self.train_corpus = self._cut_len("train", self.train_corpus)
+        self.valid_corpus = self._cut_len("valid", self.valid_corpus)
+        self.test_corpus = self._cut_len("test", self.test_corpus)
 
         # create vocabulary list sorted by count
         print("Load corpus with train size %d, valid size %d, test size %d vocabulary size %d"
@@ -70,6 +69,25 @@ class PTBCorpus(Corpus):
                   'valid': self.valid_corpus,
                   'test': self.test_corpus,
                   'vocab': (self.vocab, self.vocab_to_id)}, open(cache_path, 'wb'))
+
+    @staticmethod
+    def _to_tkn_list(lines):
+        results = []
+        for l in lines:
+            results.append(l.split())
+        return results
+
+    @staticmethod
+    def _cut_len(name, lines, min_len=2, max_len=30):
+        results = []
+        skip_cnts = 0
+        for l in lines:
+            if len(l) > min_len and len(l) < max_len:
+                results.append(l)
+            else:
+                skip_cnts += 1
+        print("Skip %d lines for %s" % (skip_cnts, name))
+        return results
 
     def get_corpus(self):
         # convert the corpus into ID

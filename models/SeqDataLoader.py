@@ -21,14 +21,14 @@ class SeqDataLoader(object):
         np.random.shuffle(self.indexes)
 
     def _prepare_batch(self, selected_index):
-        rows = self.data[selected_index]
+        rows = [self.data[idx] for idx in selected_index]
         input_lens = np.array([len(row)-1 for row in rows], dtype=np.int32)
         max_len = np.max(input_lens)
         inputs = np.zeros((self.batch_size, max_len), dtype=np.int32)
         outputs = np.zeros((self.batch_size, max_len), dtype=np.int32)
         for idx, row in enumerate(rows):
-            inputs[idx, :] = row[0:-1]
-            outputs[idx, :] = row[1:]
+            inputs[idx, 0:input_lens[idx]] = row[0:-1]
+            outputs[idx, 0:input_lens[idx]] = row[1:]
         return inputs, input_lens, outputs
 
     def epoch_init(self, batch_size, shuffle=True):
