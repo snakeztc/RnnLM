@@ -33,7 +33,7 @@ class SeqLM(object):
             input_embedding = tf.reshape(input_embedding, [-1, max_sent_len, embedding_size])
 
         with variable_scope.variable_scope("rnn"):
-            cell = tf_helpers.MemoryLSTMCell(cell_size, memory_size, use_peepholes=True)
+            cell = tf_helpers.MemoryGRUCell(cell_size, memory_size)
 
             if use_dropout:
                 cell = rnn_cell.DropoutWrapper(cell, output_keep_prob=self.keep_prob)

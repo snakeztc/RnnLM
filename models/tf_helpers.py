@@ -193,11 +193,11 @@ class MemoryGRUCell(rnn_cell.RNNCell):
 
     @property
     def state_size(self):
-        return self._num_units
+        return self._num_units, self._attn_length*self._num_units
 
     @property
     def output_size(self):
-        return self._num_units, self._attn_length*self._num_units
+        return self._num_units
 
     def __call__(self, inputs, state, scope=None):
         """Gated recurrent unit (GRU) with n_units cells."""
