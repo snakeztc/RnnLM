@@ -201,12 +201,12 @@ class MemoryGRUCell(rnn_cell.RNNCell):
 
     def __call__(self, inputs, state, scope=None):
         """Gated recurrent unit (GRU) with n_units cells."""
-        (state_prev_summary, state_tape_prev) = state
+        (h_prev_summary, h_tape_prev) = state
         with vs.variable_scope(scope or type(self).__name__):  # "GRUCell"
-            state_tape_prev = array_ops.reshape(state_tape_prev, [-1, self._attn_length, self._num_units])
+            h_tape_prev = array_ops.reshape(h_tape_prev, [-1, self._attn_length, self._num_units])
 
             # get new summary
-            h_summary, new_h_tape = self._attention(inputs, state_prev_summary, state_tape_prev)
+            h_summary, new_h_tape = self._attention(inputs, h_prev_summary, h_tape_prev)
 
             with vs.variable_scope("Gates"):  # Reset gate and update gate.
                 # We start with bias of 1.0 to not reset and not update.

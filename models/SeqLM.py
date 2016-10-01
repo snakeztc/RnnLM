@@ -33,7 +33,8 @@ class SeqLM(object):
             input_embedding = tf.reshape(input_embedding, [-1, max_sent_len, embedding_size])
 
         with variable_scope.variable_scope("rnn"):
-            cell = tf_helpers.MemoryGRUCell(cell_size, memory_size)
+            #cell = tf_helpers.MemoryGRUCell(cell_size, memory_size)
+            cell = rnn_cell.GRUCell(cell_size)
 
             if use_dropout:
                 cell = rnn_cell.DropoutWrapper(cell, output_keep_prob=self.keep_prob)
@@ -69,7 +70,10 @@ class SeqLM(object):
 
         # optimization
         optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
-        self.train_ops = optimizer.minimize(self.reg_loss)
+        gvs = optimizer.compute_gradients(self.reg_loss)
+        capped_gvs = [(tf.clip_by_value(grad, -5.0, 5.0), var) for grad, var in gvs]
+        #self.train_ops = optimizer.minimize(self.reg_loss)
+        self.train_ops = optimizer.apply_gradients(capped_gvs)
 
         train_log_dir = os.path.join(log_dir, "train")
         valid_log_dir = os.path.join(log_dir, "valid")
