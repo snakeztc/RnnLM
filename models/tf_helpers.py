@@ -154,7 +154,7 @@ class MemoryLSTMCell(rnn_cell.RNNCell):
 
         with vs.variable_scope("Attention"):
             # mask out empty slots
-            mask = (tf.sign(tf.reduce_sum(tf.abs(h_tape), reduction_indices=2)) - 1.0) * 10e8
+            mask = tf.sign(tf.reduce_max(tf.abs(h_tape), reduction_indices=2))
 
             # construct query for attention
             concat_w = rnn_cell._get_concat_variable("query_w", [input_size.value+self._num_units, self._num_units], x.dtype, 1)
@@ -169,8 +169,9 @@ class MemoryLSTMCell(rnn_cell.RNNCell):
             memory = array_ops.reshape(c_tape, [-1, self._attn_length, 1, self._num_units])
 
             hidden_features = tf.nn.conv2d(hidden, k, [1, 1, 1, 1], "SAME")
-            s = tf.reduce_sum(v * tf.tanh(hidden_features + query), [2, 3]) + mask
-            a = tf.nn.softmax(s)
+            s = tf.reduce_sum(v * tf.tanh(hidden_features + query), [2, 3])
+            a = tf.nn.softmax(s) * mask
+            a = a / (tf.reduce_sum(a) + 1e-12)
 
             h_summary = tf.reduce_sum(array_ops.reshape(a, [-1, self._attn_length, 1, 1]) * hidden, [1, 2])
             c_summary = tf.reduce_sum(array_ops.reshape(a, [-1, self._attn_length, 1, 1]) * memory, [1, 2])
