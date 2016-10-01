@@ -53,8 +53,8 @@ class MemoryLSTMCell(rnn_cell.RNNCell):
 
     @property
     def state_size(self):
-        # h, h_summary, c_tape, h_tape
-        return self._num_units, self._num_units, self._num_units*self._attn_length, self._num_units*self._attn_length
+        # h_summary, c_tape, h_tape
+        return self._num_units, self._num_units*self._attn_length, self._num_units*self._attn_length
 
     @property
     def output_size(self):
@@ -84,7 +84,7 @@ class MemoryLSTMCell(rnn_cell.RNNCell):
           ValueError: If input size cannot be inferred from inputs via
             static shape inference.
         """
-        (h_prev, h_prev_summary, c_tape_prev, h_tape_prev) = state
+        (h_prev_summary, c_tape_prev, h_tape_prev) = state
 
         dtype = inputs.dtype
         input_size = inputs.get_shape().with_rank(2)[1]
@@ -143,7 +143,7 @@ class MemoryLSTMCell(rnn_cell.RNNCell):
             new_h_tape = array_ops.concat(1, [new_h_tape, array_ops.expand_dims(m, 1)])
             new_h_tape = array_ops.reshape(new_h_tape, [-1, self._attn_length * self._num_units])
 
-            new_state = (m, new_h_summary, new_c_tape, new_h_tape)
+            new_state = (new_h_summary, new_c_tape, new_h_tape)
             return m, new_state
 
     def _attention(self, query, c_tape, h_tape):
