@@ -15,7 +15,7 @@ class SeqLM(object):
     """
     This models treat LM as a sequential labelling problem, where it needs to make prediction at every step
     """
-    def __init__(self, sess, vocab_size, cell_size, embedding_size, num_layer, log_dir,
+    def __init__(self, sess, vocab_size, cell_size, embedding_size, num_layer, memory_size, log_dir,
                  learning_rate=0.001, momentum=0.9, use_dropout=True, l2_coef=1e-6):
 
         with tf.name_scope("io"):
@@ -33,7 +33,7 @@ class SeqLM(object):
             input_embedding = tf.reshape(input_embedding, [-1, max_sent_len, embedding_size])
 
         with variable_scope.variable_scope("rnn"):
-            cell = tf_helpers.MemoryLSTMCell(cell_size, 5, use_peepholes=False)
+            cell = tf_helpers.MemoryLSTMCell(cell_size, memory_size, use_peepholes=True)
 
             if use_dropout:
                 cell = rnn_cell.DropoutWrapper(cell, output_keep_prob=self.keep_prob)
@@ -51,14 +51,20 @@ class SeqLM(object):
                 dtype=tf.float32,
                 sequence_length=self.input_lens,
             )
-        vars = tf.trainable_variables()
         self.loss = self.sequence_loss()
         tf.scalar_summary("entropy_loss", self.loss)
         tf.scalar_summary("perplexity" ,tf.exp(self.loss))
         self.summary_op = tf.merge_all_summaries()
 
         # weight decay
-        loss_l2= tf.add_n([tf.nn.l2_loss(v) for v in vars if "bias" not in v.name.lower()])
+        all_weights = []
+        vars = tf.trainable_variables()
+        for v in vars:
+            if "bias" not in v.name.lower():
+                all_weights.append(tf.nn.l2_loss(v))
+                print("adding l2 to %s" %v.name)
+
+        loss_l2= tf.add_n(all_weights)
         self.reg_loss = self.loss + l2_coef * loss_l2
 
         # optimization

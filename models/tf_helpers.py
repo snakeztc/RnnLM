@@ -95,17 +95,13 @@ class MemoryLSTMCell(rnn_cell.RNNCell):
             concat_w = rnn_cell._get_concat_variable(
                 "W", [input_size.value + self._num_units, 4 * self._num_units], dtype, 1)
 
-            b = vs.get_variable("B", shape=[4 * self._num_units], initializer=array_ops.zeros_initializer, dtype=dtype)
-
-            # construct query for attention
-            query = _linear(inputs, self._num_units, bias=False, scope="input_w")
-            query += _linear(h_prev_summary, self._num_units, bias=False, scope="h_summary_w")
+            b = vs.get_variable("Bias", shape=[4 * self._num_units], initializer=array_ops.zeros_initializer, dtype=dtype)
 
             # reshape tape to 3D
             c_tape_prev = array_ops.reshape(c_tape_prev, [-1, self._attn_length, self._num_units])
             h_tape_prev = array_ops.reshape(h_tape_prev, [-1, self._attn_length, self._num_units])
 
-            new_c_summary, new_h_summary, new_h_tape, new_c_tape = self._attention(query, c_tape_prev, h_tape_prev)
+            new_c_summary, new_h_summary, new_c_tape, new_h_tape = self._attention(inputs, h_prev_summary, c_tape_prev, h_tape_prev)
 
             # i = input_gate, j = new_input, f = forget_gate, o = output_gate
             cell_inputs = array_ops.concat(1, [inputs, new_h_summary])
@@ -132,33 +128,53 @@ class MemoryLSTMCell(rnn_cell.RNNCell):
                 c = tf.clip_ops.clip_by_value(c, -self._cell_clip, self._cell_clip)
 
             if self._use_peepholes:
-                m = sigmoid(o + w_o_diag * c) * self._activation(c)
+                h = sigmoid(o + w_o_diag * c) * self._activation(c)
             else:
-                m = sigmoid(o) * self._activation(c)
+                h = sigmoid(o) * self._activation(c)
 
             # append the new c and h to the tape
             new_c_tape = array_ops.concat(1, [new_c_tape, array_ops.expand_dims(c, 1)])
             new_c_tape = array_ops.reshape(new_c_tape, [-1, self._attn_length * self._num_units])
 
-            new_h_tape = array_ops.concat(1, [new_h_tape, array_ops.expand_dims(m, 1)])
+            new_h_tape = array_ops.concat(1, [new_h_tape, array_ops.expand_dims(h, 1)])
             new_h_tape = array_ops.reshape(new_h_tape, [-1, self._attn_length * self._num_units])
 
             new_state = (new_h_summary, new_c_tape, new_h_tape)
-            return m, new_state
+            return h, new_state
 
-    def _attention(self, query, c_tape, h_tape):
+    def _attention(self, x, h_prev_summary, c_tape, h_tape):
+        """
+        :param x: batch_size * input_size
+        :param h_prev_summary:batch_size * cell_size
+        :param c_tape: batch_size * memory_size * cell_size
+        :param h_tape: batch_size * memory_size * cell_size
+        :return:
+        """
+        input_size = x.get_shape().with_rank(2)[1]
+
         with vs.variable_scope("Attention"):
+            # mask out empty slots
+            mask = (tf.sign(tf.reduce_sum(tf.abs(h_tape), reduction_indices=2)) - 1.0) * 10e8
+
+            # construct query for attention
+            concat_w = rnn_cell._get_concat_variable("query_w", [input_size.value+self._num_units, self._num_units], x.dtype, 1)
+            b = vs.get_variable("query_bias", shape=[self._num_units], initializer=array_ops.zeros_initializer, dtype=x.dtype)
+            query = tf.nn.bias_add(math_ops.matmul(array_ops.concat(1, [x, h_prev_summary]), concat_w), b)
+            query = array_ops.reshape(query, [-1, 1, 1, self._num_units])
+
+            # get the weights for attention
             k = vs.get_variable("AttnW", [1, 1, self._num_units, self._num_units])
             v = vs.get_variable("AttnV", [self._num_units])
             hidden = array_ops.reshape(h_tape, [-1, self._attn_length, 1, self._num_units])
             memory = array_ops.reshape(c_tape, [-1, self._attn_length, 1, self._num_units])
+
             hidden_features = tf.nn.conv2d(hidden, k, [1, 1, 1, 1], "SAME")
-            y = array_ops.reshape(query, [-1, 1, 1, self._num_units])
-            s = tf.reduce_sum(v * tf.tanh(hidden_features + y), [2, 3])
+            s = tf.reduce_sum(v * tf.tanh(hidden_features + query), [2, 3]) + mask
             a = tf.nn.softmax(s)
+
             h_summary = tf.reduce_sum(array_ops.reshape(a, [-1, self._attn_length, 1, 1]) * hidden, [1, 2])
             c_summary = tf.reduce_sum(array_ops.reshape(a, [-1, self._attn_length, 1, 1]) * memory, [1, 2])
 
             new_h_tape = array_ops.slice(h_tape, [0, 1, 0], [-1, -1, -1])
             new_c_tape = array_ops.slice(c_tape, [0, 1, 0], [-1, -1, -1])
-            return c_summary, h_summary, new_h_tape, new_c_tape
+            return c_summary, h_summary, new_c_tape, new_h_tape

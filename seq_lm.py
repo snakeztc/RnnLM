@@ -14,7 +14,8 @@ tf.app.flags.DEFINE_string("work_dir", "seq_working", "Experiment results direct
 tf.app.flags.DEFINE_integer("embedding_size", 150, "The embedding size of word embedding")
 tf.app.flags.DEFINE_integer("cell_size", 300, "The width of RNN")
 tf.app.flags.DEFINE_integer("batch_size", 32, "Number of sample each mini batch")
-tf.app.flags.DEFINE_integer("num_layers", 2, "The number of layers in recurrent neural network")
+tf.app.flags.DEFINE_integer("num_layers", 1, "The number of layers in recurrent neural network")
+tf.app.flags.DEFINE_integer("memory_size", 1, "The LSTMN window size")
 tf.app.flags.DEFINE_integer("max_epoch", 200, "Max number of turn to be modelled")
 tf.app.flags.DEFINE_float("l2_coef", 1e-5, "L2 regulzation weight for weight matrixes")
 tf.app.flags.DEFINE_float("learning_rate", 0.001, "learning rate of SGD")
@@ -47,6 +48,7 @@ with tf.Session() as sess:
                   cell_size=FLAGS.cell_size,
                   embedding_size=FLAGS.embedding_size,
                   num_layer=FLAGS.num_layers,
+                  memory_size=FLAGS.memory_size,
                   log_dir=log_dir,
                   learning_rate=FLAGS.learning_rate,
                   momentum=FLAGS.momentum,
@@ -66,6 +68,7 @@ with tf.Session() as sess:
 
     global_t = 0
     patience = 10 # wait for at least 10 epoch before stop
+    dev_loss_threshold = np.inf
     best_dev_loss = np.inf
     checkpoint_path = os.path.join(ckp_dir, "seq-ptb-lm.ckpt")
 
@@ -87,12 +90,13 @@ with tf.Session() as sess:
         # only save a models if the dev loss is smaller
         done_epoch = epoch +1
         if valid_loss < best_dev_loss:
-            if valid_loss <= best_dev_loss * FLAGS.improve_threshold:
+            if valid_loss <= dev_loss_threshold * FLAGS.improve_threshold:
                 patience = max(patience, done_epoch *FLAGS.patience_increase)
-                best_dev_loss = valid_loss
+                dev_loss_threshold = valid_loss
 
             # still save the best train model
             model.saver.save(sess, checkpoint_path, global_step=epoch)
+            best_dev_loss = valid_loss
 
         if FLAGS.early_stop and patience <= done_epoch:
             print("!!Early stop due to run out of patience!!")

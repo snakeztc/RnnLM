@@ -15,7 +15,7 @@ class StateLM(object):
     """
     This models treat LM as a policy problem, where you make one step prediciton given the sent state
     """
-    def __init__(self, sess, vocab_size, cell_size, embedding_size, num_layer, log_dir,
+    def __init__(self, sess, vocab_size, cell_size, embedding_size, num_layer, memory_size, log_dir,
                  learning_rate=0.001, momentum=0.9, use_dropout=True, l2_coef=1e-6):
 
         with tf.name_scope("io"):
@@ -33,7 +33,8 @@ class StateLM(object):
             input_embedding = tf.reshape(input_embedding, [-1, max_sent_len, embedding_size])
 
         with variable_scope.variable_scope("rnn"):
-            cell = rnn_cell.LSTMCell(cell_size, use_peepholes=True, state_is_tuple=True)
+            # cell = rnn_cell.LSTMCell(cell_size, use_peepholes=True, state_is_tuple=True)
+            cell = tf_helpers.MemoryLSTMCell(cell_size, memory_size, use_peepholes=True)
 
             if use_dropout:
                 cell = rnn_cell.DropoutWrapper(cell, output_keep_prob=self.keep_prob)
@@ -42,7 +43,7 @@ class StateLM(object):
                 cell = rnn_cell.MultiRNNCell([cell] * num_layer, state_is_tuple=True)
 
             # and enc_last_state will be same as the true last state
-            outputs, last_state = tf.nn.dynamic_rnn(
+            outputs, _ = tf.nn.dynamic_rnn(
                 cell,
                 input_embedding,
                 dtype=tf.float32,
@@ -60,7 +61,12 @@ class StateLM(object):
 
         # weight decay
         vars = tf.trainable_variables()
-        loss_l2 = tf.add_n([tf.nn.l2_loss(v) for v in vars if "bias" not in v.name.lower()])
+        all_weights = []
+        for v in vars:
+            if "bias" not in v.name.lower():
+                all_weights.append(tf.nn.l2_loss(v))
+                print("adding l2 to %s" % v.name)
+        loss_l2 = tf.add_n(all_weights)
         self.reg_loss = self.loss + l2_coef * loss_l2
 
         # optimization

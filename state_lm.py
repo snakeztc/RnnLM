@@ -11,9 +11,10 @@ from PTB.PTBCorpus import PTBCorpus
 tf.app.flags.DEFINE_string("data_dir", "PTB/ptb-lm", "Raw data directory.")
 tf.app.flags.DEFINE_string("work_dir", "seq_working", "Experiment results directory.")
 tf.app.flags.DEFINE_integer("embedding_size", 150, "The embedding size of word embedding")
-tf.app.flags.DEFINE_integer("cell_size", 400, "The width of RNN")
+tf.app.flags.DEFINE_integer("cell_size", 300, "The width of RNN")
 tf.app.flags.DEFINE_integer("batch_size", 128, "Number of sample each mini batch")
 tf.app.flags.DEFINE_integer("num_layers", 2, "The number of layers in recurrent neural network")
+tf.app.flags.DEFINE_integer("memory_size", 10, "The LSTMN window size")
 tf.app.flags.DEFINE_integer("max_epoch", 200, "Max number of turn to be modelled")
 tf.app.flags.DEFINE_float("l2_coef", 1e-7, "L2 regulzation weight for weight matrixes")
 tf.app.flags.DEFINE_float("learning_rate", 0.001, "learning rate of SGD")
@@ -46,6 +47,7 @@ with tf.Session() as sess:
                     cell_size=FLAGS.cell_size,
                     embedding_size=FLAGS.embedding_size,
                     num_layer=FLAGS.num_layers,
+                    memory_size=FLAGS.memory_size,
                     log_dir=log_dir,
                     learning_rate=FLAGS.learning_rate,
                     momentum=FLAGS.momentum,
