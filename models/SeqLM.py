@@ -6,7 +6,6 @@ from tensorflow.python.ops import nn_ops
 from tensorflow.python.ops import variable_scope
 import tf_helpers
 import os
-import time
 import utils
 
 from tensorflow.python.ops.nn import rnn_cell
@@ -34,9 +33,7 @@ class SeqLM(object):
             input_embedding = tf.reshape(input_embedding, [-1, max_sent_len, embedding_size])
 
         with variable_scope.variable_scope("rnn"):
-            cell = tf_helpers.MemoryCellWrapper(
-                rnn_cell.LSTMCell(cell_size, use_peepholes=True, state_is_tuple=True),
-                attn_length=5, state_is_tuple=True)
+            cell = tf_helpers.MemoryLSTMCell(cell_size, 5, use_peepholes=False)
 
             if use_dropout:
                 cell = rnn_cell.DropoutWrapper(cell, output_keep_prob=self.keep_prob)
