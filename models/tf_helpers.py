@@ -179,3 +179,80 @@ class MemoryLSTMCell(rnn_cell.RNNCell):
             new_h_tape = array_ops.slice(h_tape, [0, 1, 0], [-1, -1, -1])
             new_c_tape = array_ops.slice(c_tape, [0, 1, 0], [-1, -1, -1])
             return c_summary, h_summary, new_c_tape, new_h_tape
+
+
+class MemoryGRUCell(rnn_cell.RNNCell):
+    """Gated Recurrent Unit cell (cf. http://arxiv.org/abs/1406.1078)."""
+
+    def __init__(self, num_units, attn_length, input_size=None, activation=tanh):
+        if input_size is not None:
+            tf.logging.warn("%s: The input_size parameter is deprecated.", self)
+        self._num_units = num_units
+        self._attn_length = attn_length
+        self._activation = activation
+
+    @property
+    def state_size(self):
+        return self._num_units
+
+    @property
+    def output_size(self):
+        return self._num_units, self._attn_length*self._num_units
+
+    def __call__(self, inputs, state, scope=None):
+        """Gated recurrent unit (GRU) with n_units cells."""
+        (state_prev_summary, state_tape_prev) = state
+        with vs.variable_scope(scope or type(self).__name__):  # "GRUCell"
+            state_tape_prev = array_ops.reshape(state_tape_prev, [-1, self._attn_length, self._num_units])
+
+            # get new summary
+            h_summary, new_h_tape = self._attention(inputs, state_prev_summary, state_tape_prev)
+
+            with vs.variable_scope("Gates"):  # Reset gate and update gate.
+                # We start with bias of 1.0 to not reset and not update.
+                r, u = array_ops.split(1, 2, _linear([inputs, h_summary],
+                                                 2 * self._num_units, True, 1.0))
+                r, u = sigmoid(r), sigmoid(u)
+            with vs.variable_scope("Candidate"):
+                c = self._activation(_linear([inputs, r * h_summary], self._num_units, True))
+
+            new_h = u * h_summary + (1 - u) * c
+
+            # append the new h to the tape
+            new_h_tape = array_ops.concat(1, [new_h_tape, array_ops.expand_dims(new_h, 1)])
+            new_h_tape = array_ops.reshape(new_h_tape, [-1, self._attn_length * self._num_units])
+
+        return new_h, (h_summary, new_h_tape)
+
+    def _attention(self, x, h_prev_summary, h_tape):
+        """
+        :param x: batch_size * input_size
+        :param h_prev_summary:batch_size * cell_size
+        :param h_tape: batch_size * memory_size * cell_size
+        :return:
+        """
+        input_size = x.get_shape().with_rank(2)[1]
+
+        with vs.variable_scope("Attention"):
+            # mask out empty slots
+            mask = tf.sign(tf.reduce_max(tf.abs(h_tape), reduction_indices=2))
+
+            # construct query for attention
+            concat_w = rnn_cell._get_concat_variable("query_w", [input_size.value+self._num_units, self._num_units], x.dtype, 1)
+            b = vs.get_variable("query_bias", shape=[self._num_units], initializer=array_ops.zeros_initializer, dtype=x.dtype)
+            query = tf.nn.bias_add(math_ops.matmul(array_ops.concat(1, [x, h_prev_summary]), concat_w), b)
+            query = array_ops.reshape(query, [-1, 1, 1, self._num_units])
+
+            # get the weights for attention
+            k = vs.get_variable("AttnW", [1, 1, self._num_units, self._num_units])
+            v = vs.get_variable("AttnV", [self._num_units])
+            hidden = array_ops.reshape(h_tape, [-1, self._attn_length, 1, self._num_units])
+            hidden_features = tf.nn.conv2d(hidden, k, [1, 1, 1, 1], "SAME")
+            s = tf.reduce_sum(v * tf.tanh(hidden_features + query), [2, 3])
+            a = tf.nn.softmax(s) * mask
+            a = a / (tf.reduce_sum(a, reduction_indices=1, keep_dims=True) + 1e-12)
+
+            h_summary = tf.reduce_sum(array_ops.reshape(a, [-1, self._attn_length, 1, 1]) * hidden, [1, 2])
+            new_h_tape = array_ops.slice(h_tape, [0, 1, 0], [-1, -1, -1])
+
+            return h_summary, new_h_tape
