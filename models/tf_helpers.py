@@ -4,6 +4,8 @@ import tensorflow as tf
 from tensorflow.python.ops import rnn_cell
 from tensorflow.python.util import nest
 from tensorflow.python.ops import array_ops
+from tensorflow.python.ops.math_ops import tanh
+from tensorflow.python.ops.math_ops import sigmoid
 from tensorflow.python.ops import variable_scope as vs
 
 _linear = rnn_cell._linear
@@ -18,6 +20,125 @@ def weight_and_bias(in_size, out_size, scope, include_bias=True):
             return tf.Variable(weight, name="W"), tf.Variable(bias, name="bias")
         else:
             return tf.Variable(weight, name="W")
+
+
+class LSTMNCell(rnn_cell.RNNCell):
+
+    def __init__(self, num_units, use_peepholes=False, cell_clip=None,
+                 initializer=None, forget_bias=1.0, activation=tanh):
+        """Initialize the parameters for an LSTM cell.
+
+        Args:
+          num_units: int, The number of units in the LSTM cell
+          input_size: Deprecated and unused.
+          use_peepholes: bool, set True to enable diagonal/peephole connections.
+          cell_clip: (optional) A float value, if provided the cell state is clipped
+            by this value prior to the cell output activation.
+          initializer: (optional) The initializer to use for the weight and
+            projection matrices.
+          forget_bias: Biases of the forget gate are initialized by default to 1
+            in order to reduce the scale of forgetting at the beginning of
+            the training.
+          activation: Activation function of the inner states.
+        """
+        self._num_units = num_units
+        self._use_peepholes = use_peepholes
+        self._cell_clip = cell_clip
+        self._initializer = initializer
+        self._forget_bias = forget_bias
+        self._activation = activation
+        self._state_size = rnn_cell.LSTMStateTuple(num_units, num_units)
+        self._output_size = num_units
+
+    @property
+    def state_size(self):
+        return self._state_size
+
+    @property
+    def output_size(self):
+        return self._output_size
+
+    def __call__(self, inputs, state, scope=None):
+        """Run one step of LSTM.
+
+        Args:
+          inputs: input Tensor, 2D, batch x num_units.
+          state: if `state_is_tuple` is False, this must be a state Tensor,
+            `2-D, batch x state_size`.  If `state_is_tuple` is True, this must be a
+            tuple of state Tensors, both `2-D`, with column sizes `c_state` and
+            `m_state`.
+          scope: VariableScope for the created subgraph; defaults to "LSTMCell".
+
+        Returns:
+          A tuple containing:
+          - A `2-D, [batch x output_dim]`, Tensor representing the output of the
+            LSTM after reading `inputs` when previous state was `state`.
+            Here output_dim is:
+               num_proj if num_proj was set,
+               num_units otherwise.
+          - Tensor(s) representing the new state of LSTM after reading `inputs` when
+            the previous state was `state`.  Same type and shape(s) as `state`.
+
+        Raises:
+          ValueError: If input size cannot be inferred from inputs via
+            static shape inference.
+        """
+        num_proj = self._num_units if self._num_proj is None else self._num_proj
+
+        (c_prev, m_prev) = state
+
+        dtype = inputs.dtype
+        input_size = inputs.get_shape().with_rank(2)[1]
+        if input_size.value is None:
+            raise ValueError("Could not infer input size from inputs.get_shape()[-1]")
+        with vs.variable_scope(scope or type(self).__name__,
+                               initializer=self._initializer):  # "LSTMCell"
+            concat_w = rnn_cell._get_concat_variable(
+                "W", [input_size.value + num_proj, 4 * self._num_units], dtype, self._num_unit_shards)
+
+            b = vs.get_variable(
+                  "B", shape=[4 * self._num_units], initializer=array_ops.zeros_initializer, dtype=dtype)
+
+            # i = input_gate, j = new_input, f = forget_gate, o = output_gate
+            cell_inputs = array_ops.concat(1, [inputs, m_prev])
+            lstm_matrix = tf.nn_ops.bias_add(tf.math_ops.matmul(cell_inputs, concat_w), b)
+            i, j, f, o = array_ops.split(1, 4, lstm_matrix)
+
+            # Diagonal connections
+            if self._use_peepholes:
+                w_f_diag = vs.get_variable(
+                    "W_F_diag", shape=[self._num_units], dtype=dtype)
+                w_i_diag = vs.get_variable(
+                    "W_I_diag", shape=[self._num_units], dtype=dtype)
+                w_o_diag = vs.get_variable(
+                    "W_O_diag", shape=[self._num_units], dtype=dtype)
+
+            if self._use_peepholes:
+                c = (sigmoid(f + self._forget_bias + w_f_diag * c_prev) * c_prev +
+                     sigmoid(i + w_i_diag * c_prev) * self._activation(j))
+            else:
+                c = (sigmoid(f + self._forget_bias) * c_prev + sigmoid(i) *
+                     self._activation(j))
+
+            if self._cell_clip is not None:
+                c = tf.clip_ops.clip_by_value(c, -self._cell_clip, self._cell_clip)
+
+            if self._use_peepholes:
+                m = sigmoid(o + w_o_diag * c) * self._activation(c)
+            else:
+                m = sigmoid(o) * self._activation(c)
+
+            if self._num_proj is not None:
+                concat_w_proj = rnn_cell._get_concat_variable(
+                    "W_P", [self._num_units, self._num_proj], dtype, self._num_proj_shards)
+
+                m = tf.math_ops.matmul(m, concat_w_proj)
+                if self._proj_clip is not None:
+                    m = tf.clip_ops.clip_by_value(m, -self._proj_clip, self._proj_clip)
+
+            new_state = rnn_cell.LSTMStateTuple(c, m)
+
+            return m, new_state
 
 
 class MemoryCellWrapper(rnn_cell.RNNCell):
