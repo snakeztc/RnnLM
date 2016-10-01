@@ -171,7 +171,7 @@ class MemoryLSTMCell(rnn_cell.RNNCell):
             hidden_features = tf.nn.conv2d(hidden, k, [1, 1, 1, 1], "SAME")
             s = tf.reduce_sum(v * tf.tanh(hidden_features + query), [2, 3])
             a = tf.nn.softmax(s) * mask
-            a = a / (tf.reduce_sum(a) + 1e-12)
+            a = a / (tf.reduce_sum(a, reduction_indices=1, keep_dims=True) + 1e-12)
 
             h_summary = tf.reduce_sum(array_ops.reshape(a, [-1, self._attn_length, 1, 1]) * hidden, [1, 2])
             c_summary = tf.reduce_sum(array_ops.reshape(a, [-1, self._attn_length, 1, 1]) * memory, [1, 2])
