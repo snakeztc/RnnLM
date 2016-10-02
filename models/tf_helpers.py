@@ -184,12 +184,18 @@ class MemoryLSTMCell(rnn_cell.RNNCell):
 class MemoryGRUCell(rnn_cell.RNNCell):
     """Gated Recurrent Unit cell (cf. http://arxiv.org/abs/1406.1078)."""
 
-    def __init__(self, num_units, attn_length, input_size=None, activation=tanh):
+    def __init__(self, num_units, attn_length, attn_size=None, input_size=None, activation=tanh):
         if input_size is not None:
             tf.logging.warn("%s: The input_size parameter is deprecated.", self)
         self._num_units = num_units
         self._attn_length = attn_length
         self._activation = activation
+        if attn_size is not None:
+            self._attn_size = attn_size
+        else:
+            self._attn_size = num_units
+        self._attn_indexes = tf.reshape(tf.to_float(tf.range(1, self._attn_length + 1)) / self._attn_length,
+                                        [1, self._attn_length, 1])
 
     @property
     def state_size(self):
@@ -229,30 +235,36 @@ class MemoryGRUCell(rnn_cell.RNNCell):
         :param x: batch_size * input_size
         :param h_prev_summary:batch_size * cell_size
         :param h_tape: batch_size * memory_size * cell_size
-        :return:
+        :return: weighted sum h, and trucated h_tape
         """
         input_size = x.get_shape().with_rank(2)[1]
 
         with vs.variable_scope("Attention"):
-            # mask out empty slots
-            mask = tf.sign(tf.reduce_max(tf.abs(h_tape), reduction_indices=2))
-
             # construct query for attention
-            concat_w = rnn_cell._get_concat_variable("query_w", [input_size.value+self._num_units, self._num_units], x.dtype, 1)
-            b = vs.get_variable("query_bias", shape=[self._num_units], initializer=array_ops.zeros_initializer, dtype=x.dtype)
+            concat_w = rnn_cell._get_concat_variable("query_w", [input_size.value+self._num_units, self._attn_size], x.dtype, 1)
+            b = vs.get_variable("query_bias", shape=[self._attn_size], initializer=array_ops.zeros_initializer, dtype=x.dtype)
             query = tf.nn.bias_add(math_ops.matmul(array_ops.concat(1, [x, h_prev_summary]), concat_w), b)
-            query = array_ops.reshape(query, [-1, 1, 1, self._num_units])
+            query = array_ops.reshape(query, [-1, 1, 1, self._attn_size])
+
+            # get temporal feature
+            mask = tf.sign(tf.reduce_max(tf.abs(h_tape), reduction_indices=2, keep_dims=True))
+            t_ids = tf.ones_like(mask) * self._attn_indexes
+            mask = tf.squeeze(mask)
 
             # get the weights for attention
-            k = vs.get_variable("AttnW", [1, 1, self._num_units, self._num_units])
-            v = vs.get_variable("AttnV", [self._num_units])
-            hidden = array_ops.reshape(h_tape, [-1, self._attn_length, 1, self._num_units])
+            k = vs.get_variable("AttnW", [1, 1, self._num_units+1, self._attn_size])
+            v = vs.get_variable("AttnV", [self._attn_size])
+            hidden = tf.concat(2, [h_tape, t_ids])
+            hidden = array_ops.reshape(hidden, [-1, self._attn_length, 1, self._num_units+1])
+
             hidden_features = tf.nn.conv2d(hidden, k, [1, 1, 1, 1], "SAME")
+
+            # compute attention point
             s = tf.reduce_sum(v * tf.tanh(hidden_features + query), [2, 3])
-            a = tf.nn.softmax(s) * mask
+            a = tf.nn.softmax(s)* mask
             a = a / (tf.reduce_sum(a, reduction_indices=1, keep_dims=True) + 1e-12)
 
-            h_summary = tf.reduce_sum(array_ops.reshape(a, [-1, self._attn_length, 1, 1]) * hidden, [1, 2])
+            h_summary = tf.reduce_sum(array_ops.reshape(a, [-1, self._attn_length, 1]) * h_tape, reduction_indices=1)
             new_h_tape = array_ops.slice(h_tape, [0, 1, 0], [-1, -1, -1])
 
             return h_summary, new_h_tape

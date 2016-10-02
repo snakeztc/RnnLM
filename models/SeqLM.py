@@ -16,13 +16,15 @@ class SeqLM(object):
     This models treat LM as a sequential labelling problem, where it needs to make prediction at every step
     """
     def __init__(self, sess, vocab_size, cell_size, embedding_size, num_layer, memory_size, log_dir,
-                 learning_rate=0.001, momentum=0.9, use_dropout=True, l2_coef=1e-6):
+                 learning_rate=0.001, momentum=0.9, learning_rate_decay_factor=0.85, use_dropout=True, l2_coef=1e-6):
 
         with tf.name_scope("io"):
             self.inputs = tf.placeholder(dtype=tf.int32, shape=(None, None), name="prev_words")
             self.input_lens = tf.placeholder(dtype=tf.int32, shape=(None, ), name="sent_len")
             self.labels = tf.placeholder(dtype=tf.int32, shape=(None, None), name="next_words")
             self.keep_prob =tf.placeholder(dtype=tf.float32, name="keep_prob")
+            self.learning_rate = tf.Variable(float(learning_rate), trainable=False)
+            self.learning_rate_decay_op = self.learning_rate.assign(self.learning_rate * learning_rate_decay_factor)
 
         max_sent_len = array_ops.shape(self.labels)[1]
         with variable_scope.variable_scope("word-embedding"):
@@ -33,7 +35,7 @@ class SeqLM(object):
             input_embedding = tf.reshape(input_embedding, [-1, max_sent_len, embedding_size])
 
         with variable_scope.variable_scope("rnn"):
-            #cell = tf_helpers.MemoryGRUCell(cell_size, memory_size)
+            # cell = tf_helpers.MemoryGRUCell(cell_size, memory_size, attn_size=100)
             cell = rnn_cell.GRUCell(cell_size)
 
             if use_dropout:
@@ -58,21 +60,24 @@ class SeqLM(object):
         self.summary_op = tf.merge_all_summaries()
 
         # weight decay
-        all_weights = []
-        vars = tf.trainable_variables()
-        for v in vars:
-            if "bias" not in v.name.lower():
-                all_weights.append(tf.nn.l2_loss(v))
-                print("adding l2 to %s" %v.name)
+        if l2_coef > 0.0:
+            all_weights = []
+            vars = tf.trainable_variables()
+            for v in vars:
+                if "bias" not in v.name.lower():
+                    all_weights.append(tf.nn.l2_loss(v))
+                    print("adding l2 to %s" %v.name)
 
-        loss_l2= tf.add_n(all_weights)
-        self.reg_loss = self.loss + l2_coef * loss_l2
+            loss_l2= tf.add_n(all_weights)
+            self.reg_loss = self.loss + l2_coef * loss_l2
+        else:
+            self.reg_loss = self.loss
 
         # optimization
-        optimizer = tf.train.AdamOptimizer(learning_rate=learning_rate)
+        optimizer = tf.train.GradientDescentOptimizer(learning_rate=learning_rate)
         gvs = optimizer.compute_gradients(self.reg_loss)
         capped_gvs = [(tf.clip_by_value(grad, -5.0, 5.0), var) for grad, var in gvs]
-        #self.train_ops = optimizer.minimize(self.reg_loss)
+        self.train_ops = optimizer.minimize(self.reg_loss)
         self.train_ops = optimizer.apply_gradients(capped_gvs)
 
         train_log_dir = os.path.join(log_dir, "train")
@@ -104,8 +109,10 @@ class SeqLM(object):
             losses.append(loss)
             global_t += 1
             local_t += 1
-            if local_t % 50 == 0:
+            if local_t % 200 == 0:
                 utils.progress(local_t/float(train_feed.num_batch))
+        # finish epoch!
+        utils.progress(1.0)
         return global_t, losses
 
     def valid(self, t, sess, valid_feed):
