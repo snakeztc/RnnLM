@@ -54,7 +54,7 @@ class MemoryLSTMCell(rnn_cell.RNNCell):
     @property
     def state_size(self):
         # h_summary, c_tape, h_tape
-        return self._num_units, self._num_units*self._attn_length, self._num_units*self._attn_length
+        return self._attn_length, self._num_units, self._num_units*self._attn_length, self._num_units*self._attn_length
 
     @property
     def output_size(self):
@@ -84,7 +84,7 @@ class MemoryLSTMCell(rnn_cell.RNNCell):
           ValueError: If input size cannot be inferred from inputs via
             static shape inference.
         """
-        (h_prev_summary, c_tape_prev, h_tape_prev) = state
+        (a, h_prev_summary, c_tape_prev, h_tape_prev) = state
 
         dtype = inputs.dtype
         input_size = inputs.get_shape().with_rank(2)[1]
@@ -101,7 +101,7 @@ class MemoryLSTMCell(rnn_cell.RNNCell):
             c_tape_prev = array_ops.reshape(c_tape_prev, [-1, self._attn_length, self._num_units])
             h_tape_prev = array_ops.reshape(h_tape_prev, [-1, self._attn_length, self._num_units])
 
-            new_c_summary, new_h_summary, new_c_tape, new_h_tape = self._attention(inputs, h_prev_summary, c_tape_prev, h_tape_prev)
+            a, new_c_summary, new_h_summary = self._attention(inputs, h_prev_summary, c_tape_prev, h_tape_prev)
 
             # i = input_gate, j = new_input, f = forget_gate, o = output_gate
             cell_inputs = array_ops.concat(1, [inputs, new_h_summary])
@@ -132,14 +132,20 @@ class MemoryLSTMCell(rnn_cell.RNNCell):
             else:
                 h = sigmoid(o) * self._activation(c)
 
+            # remove old value
+            new_h_tape = array_ops.slice(h_tape_prev, [0, 1, 0], [-1, -1, -1])
+            new_c_tape = array_ops.slice(c_tape_prev, [0, 1, 0], [-1, -1, -1])
+
             # append the new c and h to the tape
             new_c_tape = array_ops.concat(1, [new_c_tape, array_ops.expand_dims(c, 1)])
-            new_c_tape = array_ops.reshape(new_c_tape, [-1, self._attn_length * self._num_units])
-
             new_h_tape = array_ops.concat(1, [new_h_tape, array_ops.expand_dims(h, 1)])
+
+            # flatten the tape to 2D
+            new_c_tape = array_ops.reshape(new_c_tape, [-1, self._attn_length * self._num_units])
             new_h_tape = array_ops.reshape(new_h_tape, [-1, self._attn_length * self._num_units])
 
-            new_state = (new_h_summary, new_c_tape, new_h_tape)
+            new_state = (a, new_h_summary, new_c_tape, new_h_tape)
+
             return h, new_state
 
     def _attention(self, x, h_prev_summary, c_tape, h_tape):
@@ -176,9 +182,7 @@ class MemoryLSTMCell(rnn_cell.RNNCell):
             h_summary = tf.reduce_sum(array_ops.reshape(a, [-1, self._attn_length, 1, 1]) * hidden, [1, 2])
             c_summary = tf.reduce_sum(array_ops.reshape(a, [-1, self._attn_length, 1, 1]) * memory, [1, 2])
 
-            new_h_tape = array_ops.slice(h_tape, [0, 1, 0], [-1, -1, -1])
-            new_c_tape = array_ops.slice(c_tape, [0, 1, 0], [-1, -1, -1])
-            return c_summary, h_summary, new_c_tape, new_h_tape
+            return a, c_summary, h_summary
 
 
 class MemoryGRUCell(rnn_cell.RNNCell):
@@ -212,7 +216,7 @@ class MemoryGRUCell(rnn_cell.RNNCell):
             h_tape_prev = array_ops.reshape(h_tape_prev, [-1, self._attn_length, self._num_units])
 
             # get new summary
-            h_summary, new_h_tape = self._attention(inputs, h_prev_summary, h_tape_prev)
+            h_summary = self._attention(inputs, h_prev_summary, h_tape_prev)
 
             with vs.variable_scope("Gates"):  # Reset gate and update gate.
                 # We start with bias of 1.0 to not reset and not update.
@@ -225,6 +229,7 @@ class MemoryGRUCell(rnn_cell.RNNCell):
             new_h = u * h_summary + (1 - u) * c
 
             # append the new h to the tape
+            new_h_tape = array_ops.slice(h_tape_prev, [0, 1, 0], [-1, -1, -1])
             new_h_tape = array_ops.concat(1, [new_h_tape, array_ops.expand_dims(new_h, 1)])
             new_h_tape = array_ops.reshape(new_h_tape, [-1, self._attn_length * self._num_units])
 
@@ -265,6 +270,5 @@ class MemoryGRUCell(rnn_cell.RNNCell):
             a = a / (tf.reduce_sum(a, reduction_indices=1, keep_dims=True) + 1e-12)
 
             h_summary = tf.reduce_sum(array_ops.reshape(a, [-1, self._attn_length, 1]) * h_tape, reduction_indices=1)
-            new_h_tape = array_ops.slice(h_tape, [0, 1, 0], [-1, -1, -1])
 
-            return h_summary, new_h_tape
+            return h_summary

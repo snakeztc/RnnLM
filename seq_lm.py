@@ -11,17 +11,17 @@ from PTB.PTBCorpus import PTBCorpus
 # constants
 tf.app.flags.DEFINE_string("data_dir", "PTB/ptb-lm", "Raw data directory.")
 tf.app.flags.DEFINE_string("work_dir", "seq_working", "Experiment results directory.")
-tf.app.flags.DEFINE_integer("embedding_size", 150, "The embedding size of word embedding")
-tf.app.flags.DEFINE_integer("cell_size", 300, "The width of RNN")
-tf.app.flags.DEFINE_integer("batch_size", 40, "Number of sample each mini batch")
-tf.app.flags.DEFINE_integer("num_layers", 1, "The number of layers in recurrent neural network")
+tf.app.flags.DEFINE_integer("embedding_size", 200, "The embedding size of word embedding")
+tf.app.flags.DEFINE_integer("cell_size", 200, "The width of RNN")
+tf.app.flags.DEFINE_integer("batch_size", 20, "Number of sample each mini batch")
+tf.app.flags.DEFINE_integer("num_layers", 2, "The number of layers in recurrent neural network")
 tf.app.flags.DEFINE_integer("memory_size", 5, "The LSTMN window size")
-tf.app.flags.DEFINE_integer("max_epoch", 200, "Max number of turn to be modelled")
+tf.app.flags.DEFINE_integer("max_epoch", 100, "Max number of turn to be modelled")
 tf.app.flags.DEFINE_float("l2_coef", 1e-6, "L2 regulzation weight for weight matrixes")
-tf.app.flags.DEFINE_float("learning_rate", 0.65, "learning rate of SGD")
+tf.app.flags.DEFINE_float("learning_rate", 1.0, "learning rate of SGD")
 tf.app.flags.DEFINE_float("momentum", 0.9, "How much momentum")
-tf.app.flags.DEFINE_bool("use_dropout", True, "if use drop out")
-tf.app.flags.DEFINE_bool("equal_batch", True, "Group lines so that batch has similar lens")
+tf.app.flags.DEFINE_bool("use_dropout", False, "if use drop out")
+tf.app.flags.DEFINE_bool("equal_batch", False, "Group lines so that batch has similar lens")
 tf.app.flags.DEFINE_float("improve_threshold", 0.995, "how much decrease in dev loss counts")
 tf.app.flags.DEFINE_float("patience_increase", 2.0, "How much more we wait for a new discovered minmum")
 tf.app.flags.DEFINE_bool("early_stop", True, "Whether to early stop")
@@ -39,22 +39,25 @@ train_feed = SeqDataLoader("train", train_data, equal_len_batch=FLAGS.equal_batc
 valid_feed = SeqDataLoader("valid", valid_data)
 test_feed = SeqDataLoader("test", test_data)
 
-#log_dir = os.path.join(FLAGS.work_dir, "run"+str(int(time.time())))
-log_dir = os.path.join(FLAGS.work_dir, "run1475417470")
+log_dir = os.path.join(FLAGS.work_dir, "run"+str(int(time.time())))
+#log_dir = os.path.join(FLAGS.work_dir, "run1475417470")
 
 # begin training
 with tf.Session() as sess:
-    model = SeqLM(sess,
-                  vocab_size=api.get_vocab_size(),
-                  cell_size=FLAGS.cell_size,
-                  embedding_size=FLAGS.embedding_size,
-                  num_layer=FLAGS.num_layers,
-                  memory_size=FLAGS.memory_size,
-                  log_dir=log_dir,
-                  learning_rate=FLAGS.learning_rate,
-                  momentum=FLAGS.momentum,
-                  use_dropout=FLAGS.use_dropout,
-                  l2_coef=FLAGS.l2_coef)
+    initializer = tf.random_uniform_initializer(-0.1, 0.1)
+    with tf.variable_scope("model", reuse=None, initializer=initializer):
+        model = SeqLM(sess,
+                      vocab_size=api.get_vocab_size(),
+                      cell_size=FLAGS.cell_size,
+                      embedding_size=FLAGS.embedding_size,
+                      num_layer=FLAGS.num_layers,
+                      memory_size=FLAGS.memory_size,
+                      log_dir=log_dir,
+                      learning_rate=FLAGS.learning_rate,
+                      learning_rate_decay_factor = 0.5,
+                      momentum=FLAGS.momentum,
+                      use_dropout=FLAGS.use_dropout,
+                      l2_coef=FLAGS.l2_coef)
 
     ckp_dir = os.path.join(log_dir, "checkpoints")
     if not os.path.exists(ckp_dir):
@@ -75,29 +78,22 @@ with tf.Session() as sess:
     checkpoint_path = os.path.join(ckp_dir, "seq-ptb-lm.ckpt")
 
     for epoch in range(FLAGS.max_epoch):
-        train_feed.epoch_init(FLAGS.batch_size)
+        train_feed.epoch_init(FLAGS.batch_size, shuffle=False
+                              )
         print("epoch %d" % epoch)
-        start_time = time.time()
-        global_t, losses = model.train(global_t, sess, train_feed)
-        epoch_time = time.time() - start_time
-        train_loss = np.mean(losses)
-        print("Train loss for %f and perplexity %f step time %.4f" % (train_loss, np.exp(train_loss), epoch_time/train_feed.num_batch))
+        global_t, train_loss = model.train(global_t, sess, train_feed)
 
         # begin validation
         valid_feed.epoch_init(FLAGS.batch_size, shuffle=False)
-        losses = model.valid(global_t, sess, valid_feed)
-        valid_loss = np.mean(losses)
-        print("Valid loss for %f and perplexity %f" % (valid_loss, np.exp(valid_loss)))
+        valid_loss = model.valid(global_t, sess, valid_feed)
 
-        # Decrease learning rate if no improvement was seen over last 3 times.
-        if len(previous_losses) > 2 and valid_loss > FLAGS.improve_threshold * max(previous_losses[-3:]):
-            print "Decay rate"
-            sess.run(model.learning_rate_decay_op)
-        previous_losses.append(valid_loss)
-
-
-        # only save a models if the dev loss is smaller
         done_epoch = epoch +1
+        # only save a models if the dev loss is smaller
+        # Decrease learning rate if no improvement was seen over last 3 times.
+        if done_epoch > 3:
+            sess.run(model.learning_rate_decay_op)
+            print "Decay rate %f" % model.learning_rate.eval()
+
         if valid_loss < best_dev_loss:
             if valid_loss <= dev_loss_threshold * FLAGS.improve_threshold:
                 patience = max(patience, done_epoch *FLAGS.patience_increase)

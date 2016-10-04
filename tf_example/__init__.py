@@ -18,4 +18,4 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-from tf_example import reader
+from tensorflow.models.rnn.ptb import reader

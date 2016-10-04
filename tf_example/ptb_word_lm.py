@@ -26,6 +26,8 @@ There are 3 supported model configurations:
 | small  | 13     | 37.99 | 121.39 | 115.91
 | medium | 39     | 48.45 |  86.16 |  82.07
 | large  | 55     | 37.87 |  82.62 |  78.29
+| mem_gru|        |       |  94    | 91
+|mem_lstm|        |       | 105    | 101
 The exact results may vary depending on the random initialization.
 
 The hyperparameters used in the model:
@@ -60,119 +62,144 @@ import time
 
 import numpy as np
 import tensorflow as tf
-
+import models.tf_helpers as tf_helpers
 from tensorflow.models.rnn.ptb import reader
 
 flags = tf.flags
 logging = tf.logging
 
-flags.DEFINE_string(
-    "model", "small",
+flags.DEFINE_string("model", "memory",
     "A type of model. Possible options are: small, medium, large.")
-flags.DEFINE_string("data_path", None, "data_path")
+flags.DEFINE_string("rnn", "mem_lstm", "What type of RNN we use: gru, lstm, mem_lstm, mem_gru")
+flags.DEFINE_string("data_path", "PTB/ptb-lm", "data_path")
+flags.DEFINE_string("ckp_path", "tf_example/run", "directory to save checkpoints")
+flags.DEFINE_bool("resume_train", True, "if load variable from the checkpoints")
+flags.DEFINE_bool("save_ckp", False, "Save model to disk")
+flags.DEFINE_bool("use_fp16", False,
+                  "Train using 16-bit floats instead of 32bit floats")
 
 FLAGS = flags.FLAGS
 
 
+def data_type():
+  return tf.float16 if FLAGS.use_fp16 else tf.float32
+
+
 class PTBModel(object):
-  """The PTB model."""
+    """The PTB model."""
 
-  def __init__(self, is_training, config):
-    self.batch_size = batch_size = config.batch_size
-    self.num_steps = num_steps = config.num_steps
-    size = config.hidden_size
-    vocab_size = config.vocab_size
+    def __init__(self, is_training, config):
+        self.batch_size = batch_size = config.batch_size
+        self.num_steps = num_steps = config.num_steps
+        size = config.hidden_size
+        vocab_size = config.vocab_size
 
-    self._input_data = tf.placeholder(tf.int32, [batch_size, num_steps])
-    self._targets = tf.placeholder(tf.int32, [batch_size, num_steps])
+        self._input_data = tf.placeholder(tf.int32, [batch_size, num_steps])
+        self._targets = tf.placeholder(tf.int32, [batch_size, num_steps])
 
-    # Slightly better results can be obtained with forget gate biases
-    # initialized to 1 but the hyperparameters of the model would need to be
-    # different than reported in the paper.
-    lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(size, forget_bias=0.0)
-    if is_training and config.keep_prob < 1:
-      lstm_cell = tf.nn.rnn_cell.DropoutWrapper(
-          lstm_cell, output_keep_prob=config.keep_prob)
-    cell = tf.nn.rnn_cell.MultiRNNCell([lstm_cell] * config.num_layers)
+        # Slightly better results can be obtained with forget gate biases
+        # initialized to 1 but the hyperparameters of the model would need to be
+        # different than reported in the paper.
+        if FLAGS.rnn == "lstm":
+            lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(size, forget_bias=1.0, state_is_tuple=True)
+        elif FLAGS.rnn == "mem_lstm":
+            lstm_cell = tf_helpers.MemoryLSTMCell(size, config.memory_size)
+        elif FLAGS.rnn == "mem_gru":
+            lstm_cell = tf_helpers.MemoryGRUCell(size, config.memory_size)
+        else:
+            raise ValueError("Unknown model")
 
-    self._initial_state = cell.zero_state(batch_size, tf.float32)
+        if is_training and config.keep_prob < 1:
+            lstm_cell = tf.nn.rnn_cell.DropoutWrapper(lstm_cell, output_keep_prob=config.keep_prob)
+        cell = tf.nn.rnn_cell.MultiRNNCell([lstm_cell] * config.num_layers, state_is_tuple=True)
 
-    with tf.device("/cpu:0"):
-      embedding = tf.get_variable("embedding", [vocab_size, size])
-      inputs = tf.nn.embedding_lookup(embedding, self._input_data)
+        self._initial_state = cell.zero_state(batch_size, data_type())
 
-    if is_training and config.keep_prob < 1:
-      inputs = tf.nn.dropout(inputs, config.keep_prob)
+        with tf.device("/cpu:0"):
+            embedding = tf.get_variable("embedding", [vocab_size, config.embed_size], dtype=data_type())
+            inputs = tf.nn.embedding_lookup(embedding, self._input_data)
 
-    # Simplified version of tensorflow.models.rnn.rnn.py's rnn().
-    # This builds an unrolled LSTM for tutorial purposes only.
-    # In general, use the rnn() or state_saving_rnn() from rnn.py.
-    #
-    # The alternative version of the code below is:
-    #
-    # from tensorflow.models.rnn import rnn
-    # inputs = [tf.squeeze(input_, [1])
-    #           for input_ in tf.split(1, num_steps, inputs)]
-    # outputs, state = rnn.rnn(cell, inputs, initial_state=self._initial_state)
-    outputs = []
-    state = self._initial_state
-    with tf.variable_scope("RNN"):
-      for time_step in range(num_steps):
-        if time_step > 0: tf.get_variable_scope().reuse_variables()
-        (cell_output, state) = cell(inputs[:, time_step, :], state)
-        outputs.append(cell_output)
+        if is_training and config.keep_prob < 1:
+            inputs = tf.nn.dropout(inputs, config.keep_prob)
 
-    output = tf.reshape(tf.concat(1, outputs), [-1, size])
-    softmax_w = tf.get_variable("softmax_w", [size, vocab_size])
-    softmax_b = tf.get_variable("softmax_b", [vocab_size])
-    logits = tf.matmul(output, softmax_w) + softmax_b
-    loss = tf.nn.seq2seq.sequence_loss_by_example(
-        [logits],
-        [tf.reshape(self._targets, [-1])],
-        [tf.ones([batch_size * num_steps])])
-    self._cost = cost = tf.reduce_sum(loss) / batch_size
-    self._final_state = state
+        # from tensorflow.models.rnn import rnn
+        # inputs = [tf.squeeze(input_, [1])
+        #           for input_ in tf.split(1, num_steps, inputs)]
+        # outputs, state = rnn.rnn(cell, inputs, initial_state=self._initial_state)
+        """
+        outputs = []
+        state = self._initial_state
+        with tf.variable_scope("RNN"):
+          for time_step in range(num_steps):
+            if time_step > 0: tf.get_variable_scope().reuse_variables()
+            (cell_output, state) = cell(inputs[:, time_step, :], state)
+            outputs.append(cell_output)
+        output = tf.reshape(tf.concat(1, outputs), [-1, size])
+        """
 
-    if not is_training:
-      return
+        output, state = tf.nn.dynamic_rnn(
+            cell,
+            inputs,
+            dtype=tf.float32,
+            initial_state=self._initial_state)
 
-    self._lr = tf.Variable(0.0, trainable=False)
-    tvars = tf.trainable_variables()
-    grads, _ = tf.clip_by_global_norm(tf.gradients(cost, tvars),
-                                      config.max_grad_norm)
-    optimizer = tf.train.GradientDescentOptimizer(self.lr)
-    self._train_op = optimizer.apply_gradients(zip(grads, tvars))
+        softmax_w = tf.get_variable("softmax_w", [size, vocab_size], dtype=data_type())
+        softmax_b = tf.get_variable("softmax_b", [vocab_size], dtype=data_type())
 
-  def assign_lr(self, session, lr_value):
-    session.run(tf.assign(self.lr, lr_value))
+        logits = tf.matmul(tf.reshape(output, [-1, size]), softmax_w) + softmax_b
 
-  @property
-  def input_data(self):
-    return self._input_data
+        loss = tf.nn.seq2seq.sequence_loss_by_example(
+            [logits],
+            [tf.reshape(self._targets, [-1])],
+            [tf.ones([batch_size * num_steps], dtype=data_type())])
+        self._cost = cost = tf.reduce_sum(loss) / batch_size
+        self._final_state = state
+        self.saver = tf.train.Saver(tf.all_variables())
 
-  @property
-  def targets(self):
-    return self._targets
+        if not is_training:
+            return
 
-  @property
-  def initial_state(self):
-    return self._initial_state
+        self._lr = tf.Variable(0.0, trainable=False)
+        tvars = tf.trainable_variables()
+        grads, _ = tf.clip_by_global_norm(tf.gradients(cost, tvars),
+                                          config.max_grad_norm)
+        optimizer = tf.train.GradientDescentOptimizer(self._lr)
+        self._train_op = optimizer.apply_gradients(zip(grads, tvars))
 
-  @property
-  def cost(self):
-    return self._cost
+        self._new_lr = tf.placeholder(
+            tf.float32, shape=[], name="new_learning_rate")
+        self._lr_update = tf.assign(self._lr, self._new_lr)
 
-  @property
-  def final_state(self):
-    return self._final_state
+    def assign_lr(self, session, lr_value):
+        session.run(self._lr_update, feed_dict={self._new_lr: lr_value})
 
-  @property
-  def lr(self):
-    return self._lr
+    @property
+    def input_data(self):
+        return self._input_data
 
-  @property
-  def train_op(self):
-    return self._train_op
+    @property
+    def targets(self):
+        return self._targets
+
+    @property
+    def initial_state(self):
+        return self._initial_state
+
+    @property
+    def cost(self):
+        return self._cost
+
+    @property
+    def final_state(self):
+        return self._final_state
+
+    @property
+    def lr(self):
+        return self._lr
+
+    @property
+    def train_op(self):
+        return self._train_op
 
 
 class SmallConfig(object):
@@ -189,6 +216,23 @@ class SmallConfig(object):
   lr_decay = 0.5
   batch_size = 20
   vocab_size = 10000
+
+class MemoryConfig(object):
+    """Memory LSTM config."""
+    init_scale = 0.05
+    learning_rate = 0.65
+    max_grad_norm = 5
+    num_layers = 1
+    num_steps = 20
+    memory_size = 10
+    hidden_size = 300
+    embed_size = 150
+    max_epoch = 1
+    max_max_epoch = 40
+    keep_prob = 1.0
+    lr_decay = 0.85
+    batch_size = 20
+    vocab_size = 10000
 
 
 class MediumConfig(object):
@@ -213,7 +257,7 @@ class LargeConfig(object):
   learning_rate = 1.0
   max_grad_norm = 10
   num_layers = 2
-  num_steps = 35
+  num_steps = 20
   hidden_size = 1500
   max_epoch = 14
   max_max_epoch = 55
@@ -239,80 +283,112 @@ class TestConfig(object):
   vocab_size = 10000
 
 
-def run_epoch(session, m, data, eval_op, verbose=False):
-  """Runs the model on the given data."""
-  epoch_size = ((len(data) // m.batch_size) - 1) // m.num_steps
-  start_time = time.time()
-  costs = 0.0
-  iters = 0
-  state = m.initial_state.eval()
-  for step, (x, y) in enumerate(reader.ptb_iterator(data, m.batch_size,
-                                                    m.num_steps)):
-    cost, state, _ = session.run([m.cost, m.final_state, eval_op],
-                                 {m.input_data: x,
-                                  m.targets: y,
-                                  m.initial_state: state})
-    costs += cost
-    iters += m.num_steps
+def run_epoch(session, model, data, eval_op, verbose=False):
+    """Runs the model on the given data."""
+    epoch_size = ((len(data) // model.batch_size) - 1) // model.num_steps
+    start_time = time.time()
+    costs = 0.0
+    iters = 0
+    state = session.run(model.initial_state)
+    for step, (x, y) in enumerate(reader.ptb_iterator(data, model.batch_size,
+                                                    model.num_steps)):
+        fetches = [model.cost, model.final_state, eval_op]
+        feed_dict = {}
+        feed_dict[model.input_data] = x
+        feed_dict[model.targets] = y
+        if FLAGS.model != "memory":
+            if FLAGS.rnn == "lstm":
+                for i, (c, h) in enumerate(model.initial_state):
+                    feed_dict[c] = state[i].c
+                    feed_dict[h] = state[i].h
+            else:
+                for i, h in enumerate(model.initial_state):
+                    feed_dict[h] = state[i]
+        else:
+            for i, init_s in enumerate(model.initial_state):
+                for s_i, s in enumerate(init_s):
+                    feed_dict[s] = state[i][s_i]
 
-    if verbose and step % (epoch_size // 10) == 10:
-      print("%.3f perplexity: %.3f speed: %.0f wps" %
-            (step * 1.0 / epoch_size, np.exp(costs / iters),
-             iters * m.batch_size / (time.time() - start_time)))
+        cost, state, _ = session.run(fetches, feed_dict)
+        costs += cost
+        iters += model.num_steps
 
-  return np.exp(costs / iters)
+        if verbose and step % (epoch_size // 10) == 10:
+            print("%.3f perplexity: %.3f speed: %.0f wps" %
+                  (step * 1.0 / epoch_size, np.exp(costs / iters),
+                  iters * model.batch_size / (time.time() - start_time)))
+
+    return np.exp(costs / iters)
 
 
 def get_config():
-  if FLAGS.model == "small":
-    return SmallConfig()
-  elif FLAGS.model == "medium":
-    return MediumConfig()
-  elif FLAGS.model == "large":
-    return LargeConfig()
-  elif FLAGS.model == "test":
-    return TestConfig()
-  else:
-    raise ValueError("Invalid model: %s", FLAGS.model)
+    if FLAGS.model == "small":
+        return SmallConfig()
+    elif FLAGS.model == "medium":
+        return MediumConfig()
+    elif FLAGS.model == "large":
+        return LargeConfig()
+    elif FLAGS.model == "test":
+        return TestConfig()
+    elif FLAGS.model == "memory":
+        return MemoryConfig()
+    else:
+        raise ValueError("Invalid model: %s", FLAGS.model)
 
 
 def main(_):
-  if not FLAGS.data_path:
-    raise ValueError("Must set --data_path to PTB data directory")
+    if not FLAGS.data_path:
+      raise ValueError("Must set --data_path to PTB data directory")
 
-  raw_data = reader.ptb_raw_data(FLAGS.data_path)
-  train_data, valid_data, test_data, _ = raw_data
+    raw_data = reader.ptb_raw_data(FLAGS.data_path)
+    train_data, valid_data, test_data, _ = raw_data
 
-  config = get_config()
-  eval_config = get_config()
-  eval_config.batch_size = 1
-  eval_config.num_steps = 1
+    config = get_config()
+    eval_config = get_config()
+    eval_config.batch_size = 1
+    eval_config.num_steps = 1
 
-  with tf.Graph().as_default(), tf.Session() as session:
-    initializer = tf.random_uniform_initializer(-config.init_scale,
-                                                config.init_scale)
-    with tf.variable_scope("model", reuse=None, initializer=initializer):
-      m = PTBModel(is_training=True, config=config)
-    with tf.variable_scope("model", reuse=True, initializer=initializer):
-      mvalid = PTBModel(is_training=False, config=config)
-      mtest = PTBModel(is_training=False, config=eval_config)
+    with tf.Graph().as_default(), tf.Session() as session:
+        initializer = tf.random_uniform_initializer(-config.init_scale,
+                                                  config.init_scale)
+        with tf.variable_scope("model", reuse=None, initializer=initializer):
+            m = PTBModel(is_training=True, config=config)
+        with tf.variable_scope("model", reuse=True, initializer=initializer):
+            mvalid = PTBModel(is_training=False, config=config)
+            mtest = PTBModel(is_training=False, config=eval_config)
 
-    tf.initialize_all_variables().run()
+        if FLAGS.resume_train:
+            ckpt = tf.train.get_checkpoint_state(FLAGS.ckp_path)
+            m.saver.restore(session, ckpt.model_checkpoint_path)
+            print("Loaded pre-train model")
+        else:
+            print("Create fresh model")
+            tf.initialize_all_variables().run()
 
-    for i in range(config.max_max_epoch):
-      lr_decay = config.lr_decay ** max(i - config.max_epoch, 0.0)
-      m.assign_lr(session, config.learning_rate * lr_decay)
+        prev_best_valid = None
+        print("Begin Training")
+        for i in range(config.max_max_epoch):
+            lr_decay = config.lr_decay ** max(i - config.max_epoch, 0.0)
+            m.assign_lr(session, config.learning_rate * lr_decay)
 
-      print("Epoch: %d Learning rate: %.3f" % (i + 1, session.run(m.lr)))
-      train_perplexity = run_epoch(session, m, train_data, m.train_op,
-                                   verbose=True)
-      print("Epoch: %d Train Perplexity: %.3f" % (i + 1, train_perplexity))
-      valid_perplexity = run_epoch(session, mvalid, valid_data, tf.no_op())
-      print("Epoch: %d Valid Perplexity: %.3f" % (i + 1, valid_perplexity))
+            print("Epoch: %d Learning rate: %.3f" % (i + 1, session.run(m.lr)))
+            train_perplexity = run_epoch(session, m, train_data, m.train_op,
+                                       verbose=True)
+            print("Epoch: %d Train Perplexity: %.3f" % (i + 1, train_perplexity))
+            valid_perplexity = run_epoch(session, mvalid, valid_data, tf.no_op())
+            print("Epoch: %d Valid Perplexity: %.3f" % (i + 1, valid_perplexity))
 
-    test_perplexity = run_epoch(session, mtest, test_data, tf.no_op())
-    print("Test Perplexity: %.3f" % test_perplexity)
+            if prev_best_valid:
+                if FLAGS.save_ckp and prev_best_valid > valid_perplexity:
+                    print("Save model !!")
+                    m.saver.save(session, 'tf_example/run/%s.ckp' % FLAGS.rnn, global_step=i)
+                    prev_best_valid = valid_perplexity
+            else:
+                prev_best_valid = valid_perplexity
+
+        test_perplexity = run_epoch(session, mtest, test_data, tf.no_op())
+        print("Test Perplexity: %.3f" % test_perplexity)
 
 
 if __name__ == "__main__":
-  tf.app.run()
+    tf.app.run()
